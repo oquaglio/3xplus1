@@ -8,8 +8,6 @@ services:
     container_name: c-server
     networks:
       - c-network
-    ports:
-      - "8081:8090"
 
   client: #hostname
     build:
@@ -20,8 +18,6 @@ services:
       - c-network
     depends_on:
       - server  # Ensure the server container starts before the client
-    ports:
-      - "8082:8091"
 
 networks:
   c-network:
