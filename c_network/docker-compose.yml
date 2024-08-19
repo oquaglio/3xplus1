@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  server: #hostname
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: c-server
+    networks:
+      - c-network
+    ports:
+      - "8081:8090"
+
+  client: #hostname
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: c-client
+    networks:
+      - c-network
+    depends_on:
+      - server  # Ensure the server container starts before the client
+    ports:
+      - "8082:8091"
+
+networks:
+  c-network:
+    driver: bridge
