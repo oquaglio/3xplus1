@@ -25,19 +25,18 @@ int main(int argc, char *argv[])
         start = strtoull(argv[1], NULL, 10);
     }
 
+    printf("\nnumber max_height steps cpu_time wall_time\n");
+
+    // start the clock
     clock_t t = clock(); // CPU time
     struct timespec t_start, t_now;
     clock_gettime(CLOCK_MONOTONIC, &t_start);
-
-    printf("\nnumber max_height steps cpu_time wall_time\n");
 
     for (num = start; num <= end; num = num + 1)
     {
         unsigned long long steps = 0;
         unsigned long long curr_height = num;
         unsigned long long max_height_for_num = curr_height;
-        //__uint128_t curr_height = num;
-        //__uint128_t max_height_for_num = curr_height;
 
         // output only every 1000th num to improve performance
         if (num % 1000000 == 0)
@@ -46,7 +45,7 @@ int main(int argc, char *argv[])
             fflush(stdout);
         }
 
-        // iterate until we get back to 1 (assuming we ever will)
+        // Run 3xplus1 algorithm for current number
         do
         {
 
