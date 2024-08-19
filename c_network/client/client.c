@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include <netdb.h> // For getaddrinfo()
 
-#define PORT 8081
+#define PORT 8082
 
 int main()
 {
