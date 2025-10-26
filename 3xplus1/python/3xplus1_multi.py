@@ -141,7 +141,7 @@ def printer_thread():
                     printed_height = r.height
                     last_printed_num = r.num
                     print(
-                        f"\n{r.num} {r.height} {r.steps} {r.cpu_time:.1f} {r.wall_time:.0f}"
+                        f"{r.num} {r.height} {r.steps} {r.cpu_time:.1f} {r.wall_time:.0f}"
                     )
                     sys.stdout.flush()
                     records[:] = [
