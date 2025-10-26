@@ -31,74 +31,57 @@ $ python3 3xplus1.py 100
 import signal
 import sys
 import time
-from typing import Dict, Tuple
 
 
 # ----------------------------------------------------------------------
 # Graceful Ctrl-C
 # ----------------------------------------------------------------------
 def _sigint_handler(sig, frame):
-    print("\nInterrupted by user – exiting.")
+    print("\nInterrupted by user – exiting.", file=sys.stderr)
     sys.exit(0)
 
 
 signal.signal(signal.SIGINT, _sigint_handler)
 
-# ----------------------------------------------------------------------
-# Optional cache – speeds up repeated sub-sequences
-# ----------------------------------------------------------------------
-CACHE: Dict[int, Tuple[int, int]] = {}  # key → (max_height, steps)
 
-
-def collatz_max_height_steps(n: int) -> Tuple[int, int]:
-    """Return (max_height, steps) for the Collatz sequence starting at n."""
+# ----------------------------------------------------------------------
+# Pure Collatz: no cache, no memoization, no dicts
+# ----------------------------------------------------------------------
+def collatz_max_height_steps(n: int):
+    """Return (max_height, steps) for n. No caching."""
     if n <= 0:
         return 0, 0
-    if n in CACHE:
-        return CACHE[n]
 
     steps = 0
-    cur = n
-    max_h = n
+    current = n
+    max_height = n
 
-    while cur > 1:
-        if cur > max_h:
-            max_h = cur
+    while current > 1:
+        if current > max_height:
+            max_height = current
 
-        if cur % 2 == 0:
-            cur //= 2
+        if current % 2 == 0:
+            current //= 2
         else:
-            cur = 3 * cur + 1  # no overflow possible with Python int
+            current = 3 * current + 1
 
         steps += 1
 
-        # If we have already computed this intermediate value, splice in the
-        # cached result and finish early.
-        if cur in CACHE:
-            cached_h, cached_s = CACHE[cur]
-            max_h = max(max_h, cached_h)
-            steps += cached_s
-            break
-
-    # Store the result for the original n (not for intermediates that were
-    # spliced in – they are stored when they are first encountered).
-    CACHE[n] = (max_h, steps)
-    return max_h, steps
+    return max_height, steps
 
 
 # ----------------------------------------------------------------------
 # Main driver
 # ----------------------------------------------------------------------
-def main() -> None:
+def main():
     start = 1
-
     if len(sys.argv) > 1:
         try:
             start = int(sys.argv[1])
             if start < 1:
                 raise ValueError
         except ValueError:
-            print("Error: start value must be a positive integer", file=sys.stderr)
+            print("Error: start must be a positive integer", file=sys.stderr)
             sys.exit(1)
 
     print("number max_height steps cpu_time wall_time")
@@ -106,35 +89,30 @@ def main() -> None:
     cpu_start = time.process_time()
     wall_start = time.monotonic()
 
-    global_max = 0
+    global_max_height = 0
     progress_interval = 1_000_000
     num = start
 
-    while True:  # infinite loop – break only on overflow or user abort
-        # ----- progress -------------------------------------------------
+    while True:
+        # Progress indicator
         if num % progress_interval == 0:
             print(f"\r{num}", end="", flush=True)
 
-        # ----- compute --------------------------------------------------
+        # Compute Collatz stats (no cache)
         max_h, steps = collatz_max_height_steps(num)
 
-        # ----- new global maximum ---------------------------------------
-        if max_h > global_max:
-            global_max = max_h
+        # New global maximum?
+        if max_h > global_max_height:
+            global_max_height = max_h
             cpu_now = time.process_time()
             wall_now = time.monotonic()
-
             cpu_time = cpu_now - cpu_start
             wall_time = wall_now - wall_start
-
             print(f"\r{num} {max_h} {steps} {cpu_time:.1f} {wall_time:.0f}")
             sys.stdout.flush()
 
-        # ----- advance --------------------------------------------------
+        # Next number
         num += 1
-        # (no upper-bound check – Python int can represent any size)
-
-    # never reached
 
 
 if __name__ == "__main__":
