@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Multi-threaded Collatz scanner – NO CACHE, MEMORY-SAFE, RACE-FREE
-Prints a line **only** when a NEW GLOBAL MAXIMUM height is found.
-Output is identical to the single-threaded version.
+Multi-threaded Collatz scanner – CORRECT ORDER, NO DUPLICATES, MEMORY-SAFE
+Uses a queue + printer thread to ensure maxima are printed in order.
 """
 
 import os
+import queue
 import signal
 import sys
 import threading
 import time
+from dataclasses import dataclass
 
 # ----------------------------------------------------------------------
 # Global shutdown
@@ -26,7 +27,19 @@ signal.signal(signal.SIGINT, _sigint_handler)
 
 
 # ----------------------------------------------------------------------
-# Pure Collatz – no cache
+# Result container
+# ----------------------------------------------------------------------
+@dataclass(order=True)
+class Record:
+    num: int
+    height: int
+    steps: int
+    cpu_time: float
+    wall_time: float
+
+
+# ----------------------------------------------------------------------
+# Pure Collatz
 # ----------------------------------------------------------------------
 def collatz_max_height_steps(n: int):
     if n <= 0:
@@ -43,53 +56,65 @@ def collatz_max_height_steps(n: int):
 
 
 # ----------------------------------------------------------------------
-# Global state – protected by max_lock
+# Global state
 # ----------------------------------------------------------------------
 max_lock = threading.Lock()
-
-global_max_height = 0  # current best height
-record_num = 0  # number that gave it
-record_steps = 0  # steps for that number
+global_max_height = 0
+result_queue = queue.Queue()  # Thread-safe queue for ordered printing
 
 cpu_start = time.process_time()
 wall_start = time.monotonic()
 
 
 # ----------------------------------------------------------------------
-# Worker – atomic update + print only if we raised the max
+# Printer thread – prints in correct order
+# ----------------------------------------------------------------------
+def printer_thread():
+    printed_max = 0
+    while not SHUTDOWN.is_set() or not result_queue.empty():
+        try:
+            record = result_queue.get(timeout=0.1)
+            # Only print if this is the next new max
+            if record.height > printed_max:
+                printed_max = record.height
+                print(
+                    f"{record.num} {record.height} {record.steps} {record.cpu_time:.1f} {record.wall_time:.0f}"
+                )
+                sys.stdout.flush()
+            result_queue.task_done()
+        except queue.Empty:
+            continue
+
+
+# ----------------------------------------------------------------------
+# Worker
 # ----------------------------------------------------------------------
 def worker(thread_id: int, base: int, stride: int, progress_interval: int = 1_000_000):
-    # Declare globals we will modify – MUST BE FIRST
-    global global_max_height, record_num, record_steps
+    global global_max_height
 
     num = base + thread_id * stride
     while not SHUTDOWN.is_set():
-        # ---- progress -------------------------------------------------
         if num % progress_interval == 0:
             print(f"\rT{thread_id}: {num}", end="", flush=True)
 
-        # ---- compute --------------------------------------------------
         max_h, steps = collatz_max_height_steps(num)
 
-        # ---- ATOMIC update + decide if we print -----------------------
-        print_it = False
         with max_lock:
             if max_h > global_max_height:
+                old_max = global_max_height
                 global_max_height = max_h
-                record_num = num
-                record_steps = steps
-                print_it = True  # only the winner sets this
-
-        # ---- print outside lock (fast) --------------------------------
-        if print_it:
-            cpu_now = time.process_time()
-            wall_now = time.monotonic()
-            cpu_time = cpu_now - cpu_start
-            wall_time = wall_now - wall_start
-            print(
-                f"\r{record_num} {max_h} {record_steps} {cpu_time:.1f} {wall_time:.0f}"
-            )
-            sys.stdout.flush()
+                # Only queue if we actually improved
+                if max_h > old_max:
+                    cpu_now = time.process_time()
+                    wall_now = time.monotonic()
+                    record = Record(
+                        num=num,
+                        height=max_h,
+                        steps=steps,
+                        cpu_time=cpu_now - cpu_start,
+                        wall_time=wall_now - wall_start,
+                    )
+                    result_queue.put(record)
 
         num += stride
 
@@ -121,6 +146,11 @@ def main():
     print(f"Starting {threads} threads, base = {start}")
     print("number max_height steps cpu_time wall_time")
 
+    # Start printer
+    printer = threading.Thread(target=printer_thread, daemon=True)
+    printer.start()
+
+    # Start workers
     workers = []
     for tid in range(threads):
         t = threading.Thread(target=worker, args=(tid, start, threads), daemon=True)
@@ -136,6 +166,7 @@ def main():
         SHUTDOWN.set()
         for t in workers:
             t.join()
+        printer.join()
         print("\nAll threads stopped.")
 
 
