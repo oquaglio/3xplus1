@@ -1,19 +1,8 @@
-#!/usr/bin/env pypy3
+#!/usr/bin/env python3
 """
-Multi-threaded Collatz Scanner – NO CACHE, NO MEMORY GROWTH
-
-Features:
-- Starts from any number (default: 1)
-- Unlimited integer size
-- Each thread scans a disjoint arithmetic sequence
-- Prints ONLY when a NEW GLOBAL MAXIMUM height is found
-- Progress per thread every 1M numbers
-- Ctrl+C stops all threads cleanly
-- < 100 MB RAM total (even with 64 threads)
-- Scales perfectly with CPU cores
-
-Run:
-    pypy3 collatz_mt_nocache.py [start] [threads]
+Multi-threaded Collatz scanner – NO CACHE, MEMORY-SAFE, RACE-FREE
+Prints a line **only** when a NEW GLOBAL MAXIMUM height is found.
+Output is identical to the single-threaded version.
 """
 
 import os
@@ -23,7 +12,7 @@ import threading
 import time
 
 # ----------------------------------------------------------------------
-# Global shutdown flag
+# Global shutdown
 # ----------------------------------------------------------------------
 SHUTDOWN = threading.Event()
 
@@ -37,10 +26,9 @@ signal.signal(signal.SIGINT, _sigint_handler)
 
 
 # ----------------------------------------------------------------------
-# Pure Collatz: no cache, no memoization
+# Pure Collatz – no cache
 # ----------------------------------------------------------------------
 def collatz_max_height_steps(n: int):
-    """Return (max_height, steps) for n. Zero memory allocation."""
     if n <= 0:
         return 0, 0
     steps = 0
@@ -55,43 +43,53 @@ def collatz_max_height_steps(n: int):
 
 
 # ----------------------------------------------------------------------
-# Thread-safe global maximum tracking
+# Global state – protected by max_lock
 # ----------------------------------------------------------------------
 max_lock = threading.Lock()
-global_max_height = 0
+
+global_max_height = 0  # current best height
+record_num = 0  # number that gave it
+record_steps = 0  # steps for that number
 
 cpu_start = time.process_time()
 wall_start = time.monotonic()
 
 
-def report_new_max(num: int, max_h: int, steps: int):
-    """Print only if this is the new global maximum."""
-    global global_max_height
-    with max_lock:
-        if max_h > global_max_height:
-            global_max_height = max_h
+# ----------------------------------------------------------------------
+# Worker – atomic update + print only if we raised the max
+# ----------------------------------------------------------------------
+def worker(thread_id: int, base: int, stride: int, progress_interval: int = 1_000_000):
+    # Declare globals we will modify – MUST BE FIRST
+    global global_max_height, record_num, record_steps
+
+    num = base + thread_id * stride
+    while not SHUTDOWN.is_set():
+        # ---- progress -------------------------------------------------
+        if num % progress_interval == 0:
+            print(f"\rT{thread_id}: {num}", end="", flush=True)
+
+        # ---- compute --------------------------------------------------
+        max_h, steps = collatz_max_height_steps(num)
+
+        # ---- ATOMIC update + decide if we print -----------------------
+        print_it = False
+        with max_lock:
+            if max_h > global_max_height:
+                global_max_height = max_h
+                record_num = num
+                record_steps = steps
+                print_it = True  # only the winner sets this
+
+        # ---- print outside lock (fast) --------------------------------
+        if print_it:
             cpu_now = time.process_time()
             wall_now = time.monotonic()
             cpu_time = cpu_now - cpu_start
             wall_time = wall_now - wall_start
-            print(f"\r{num} {max_h} {steps} {cpu_time:.1f} {wall_time:.0f}")
+            print(
+                f"\r{record_num} {max_h} {record_steps} {cpu_time:.1f} {wall_time:.0f}"
+            )
             sys.stdout.flush()
-
-
-# ----------------------------------------------------------------------
-# Worker thread
-# ----------------------------------------------------------------------
-def worker(thread_id: int, base: int, stride: int, progress_interval: int = 1_000_000):
-    num = base + thread_id * stride
-    while not SHUTDOWN.is_set():
-        # Progress
-        if num % progress_interval == 0:
-            print(f"\rT{thread_id}: {num}", end="", flush=True)
-
-        max_h, steps = collatz_max_height_steps(num)
-
-        if max_h > global_max_height:
-            report_new_max(num, max_h, steps)
 
         num += stride
 
