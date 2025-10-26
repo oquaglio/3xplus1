@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """
-Infinite Multi-threaded Collatz Scanner
-- No upper limit
-- Correct order
-- No cache, no OOM
-- Ctrl+C to stop
-- Prints thread ID that found each max
+Infinite Multi-threaded Collatz – CORRECT ORDER + THREAD ID
+Prints: number, max_height, steps, cpu_time, wall_time, thread_id
 """
 
 import os
@@ -17,13 +13,11 @@ from dataclasses import dataclass
 from typing import List
 
 # ----------------------------------------------------------------------
-# Global shutdown
-# ----------------------------------------------------------------------
 SHUTDOWN = threading.Event()
 
 
 def _sigint_handler(sig, frame):
-    print("\n\nStopping all threads... (this may take a moment)", file=sys.stderr)
+    print("\n\nStopping...", file=sys.stderr)
     SHUTDOWN.set()
 
 
@@ -31,23 +25,16 @@ signal.signal(signal.SIGINT, _sigint_handler)
 
 
 # ----------------------------------------------------------------------
-# Record for new maxima — NOW INCLUDES thread_id
-# ----------------------------------------------------------------------
-@dataclass
+@dataclass(order=True)
 class Record:
     num: int
     height: int
     steps: int
     cpu_time: float
     wall_time: float
-    thread_id: int  # <-- NEW
-
-    def __lt__(self, other):
-        return self.num < other.num
+    thread_id: int  # NEW: who found it
 
 
-# ----------------------------------------------------------------------
-# Pure Collatz – no cache
 # ----------------------------------------------------------------------
 def collatz_max_height_steps(n: int):
     if n <= 0:
@@ -64,92 +51,85 @@ def collatz_max_height_steps(n: int):
 
 
 # ----------------------------------------------------------------------
-# Shared state
+# Shared queue
 # ----------------------------------------------------------------------
-max_lock = threading.Lock()
-global_max_height = 0
-records: List[Record] = []
-
+record_queue: List[Record] = []
+queue_lock = threading.Lock()
 cpu_start = time.process_time()
 wall_start = time.monotonic()
 
 
 # ----------------------------------------------------------------------
-# Worker thread — now passes thread_id to Record
+# Worker – collect local maxima with thread_id
 # ----------------------------------------------------------------------
-def worker(thread_id: int, start_num: int, stride: int, batch_size: int = 1_000_000):
-    global global_max_height
-
+def worker(thread_id: int, start_num: int, stride: int, batch_size: int = 100_000):
     num = start_num + thread_id * stride
-    batch_end = num + batch_size
+    local_max_height = 0
+    local_records = []
 
     while not SHUTDOWN.is_set():
-        local_records = []
-
-        # Process one batch
         current = num
+        batch_end = current + batch_size
+
         while current < batch_end and not SHUTDOWN.is_set():
             if current % (batch_size // 10) == 0:
                 print(f"\rT{thread_id}: {current}", end="", flush=True)
 
             max_h, steps = collatz_max_height_steps(current)
 
-            with max_lock:
-                if max_h > global_max_height:
-                    global_max_height = max_h
-                    cpu_now = time.process_time()
-                    wall_now = time.monotonic()
-                    local_records.append(
-                        Record(
-                            num=current,
-                            height=max_h,
-                            steps=steps,
-                            cpu_time=cpu_now - cpu_start,
-                            wall_time=wall_now - wall_start,
-                            thread_id=thread_id,  # <-- PASS THREAD ID
-                        )
+            if max_h > local_max_height:
+                cpu_now = time.process_time()
+                wall_now = time.monotonic()
+                local_records.append(
+                    Record(
+                        num=current,
+                        height=max_h,
+                        steps=steps,
+                        cpu_time=cpu_now - cpu_start,
+                        wall_time=wall_now - wall_start,
+                        thread_id=thread_id,  # Save who found it
                     )
+                )
+                local_max_height = max_h
 
             current += stride
 
-        # Append local records atomically
-        with max_lock:
-            records.extend(local_records)
+        # Submit batch
+        with queue_lock:
+            record_queue.extend(local_records)
 
-        # Next batch
+        local_records = []
+        local_max_height = 0
         num = batch_end
-        batch_end += batch_size
 
 
 # ----------------------------------------------------------------------
-# Printer thread – prints thread ID
+# Printer – prints in order, with thread_id
 # ----------------------------------------------------------------------
 def printer_thread():
     printed_height = 0
-    last_printed_num = 0
+    last_num = 0
 
-    while not SHUTDOWN.is_set() or records:
-        time.sleep(0.5)  # check every 500ms
+    print("number max_height steps cpu_time wall_time thread", flush=True)
 
-        with max_lock:
-            # Get all records up to current max
-            pending = [r for r in records if r.num > last_printed_num]
+    while not SHUTDOWN.is_set() or record_queue:
+        time.sleep(0.5)
+
+        with queue_lock:
+            pending = [r for r in record_queue if r.num > last_num]
             if not pending:
                 continue
             pending.sort(key=lambda r: r.num)
 
-            # Print only new height increases
             for r in pending:
                 if r.height > printed_height:
                     printed_height = r.height
-                    last_printed_num = r.num
+                    last_num = r.num
                     print(
                         f"{r.num} {r.height} {r.steps} {r.cpu_time:.1f} {r.wall_time:.0f} T{r.thread_id}"
                     )
                     sys.stdout.flush()
-                    records[:] = [
-                        rec for rec in records if rec.num > r.num
-                    ]  # keep future
+                    record_queue[:] = [rec for rec in record_queue if rec.num > r.num]
                     break
 
 
@@ -159,33 +139,16 @@ def printer_thread():
 def main():
     start = 1
     if len(sys.argv) > 1:
-        try:
-            start = int(sys.argv[1])
-            if start < 1:
-                raise ValueError
-        except ValueError:
-            print("Error: start must be positive integer", file=sys.stderr)
-            sys.exit(1)
-
+        start = int(sys.argv[1])
     threads = os.cpu_count() or 4
     if len(sys.argv) > 2:
-        try:
-            threads = int(sys.argv[2])
-            if threads < 1:
-                raise ValueError
-        except ValueError:
-            print("Error: thread count must be positive", file=sys.stderr)
-            sys.exit(1)
+        threads = int(sys.argv[2])
 
-    print(f"Starting {threads} threads from {start} to infinity")
-    print("number max_height steps cpu_time wall_time thread")
-    sys.stdout.flush()
+    print(f"Starting {threads} threads from {start} → ∞")
 
-    # Start printer
     printer = threading.Thread(target=printer_thread, daemon=True)
     printer.start()
 
-    # Start workers
     workers = []
     for tid in range(threads):
         t = threading.Thread(target=worker, args=(tid, start, threads), daemon=True)
@@ -202,7 +165,6 @@ def main():
         for t in workers:
             t.join()
         printer.join()
-        print("\n\nStopped. Final max height:", global_max_height)
 
 
 if __name__ == "__main__":
