@@ -98,7 +98,7 @@ def worker(thread_id: int, start_num: int, stride: int, batch_size: int):
         current = num
         while current < batch_end and not SHUTDOWN.is_set():
             if current % (batch_size // 10) == 0:
-                #print(f"\rT{thread_id:02d}: {current:,}", end="", flush=True)
+                print(f"\rT{thread_id:02d}: {current:,}", end="", flush=True)
 
             max_h, steps = collatz_max_height_steps(current)
 
@@ -141,6 +141,8 @@ def printer_thread(csv_file: str = None):
         csv_writer.writerow(
             ["num", "height", "steps", "cpu_time", "wall_time", "thread"]
         )
+
+    print("number max_height steps cpu_time wall_time thread", flush=True)
 
     while not SHUTDOWN.is_set() or records:
         time.sleep(0.5)
