@@ -92,7 +92,7 @@ wall_start = time.perf_counter()
 def worker(thread_id: int, start_num: int, stride: int, batch_size: int):
     global global_max_height
 
-    num = start_num + thread_id * stride
+    num = start_num + thread_id
     batch_end = num + batch_size
 
     while not SHUTDOWN.is_set():
@@ -100,9 +100,6 @@ def worker(thread_id: int, start_num: int, stride: int, batch_size: int):
 
         current = num
         while current < batch_end and not SHUTDOWN.is_set():
-            if current % (batch_size // 10) == 0:
-                print(f"\rT{thread_id:02d}: {current:,}", end="", flush=True)
-
             max_h, steps = collatz_max_height_steps(current)
 
             with max_lock:
@@ -235,7 +232,6 @@ def main():
         start = 1
 
     print(f"Starting {args.threads} threads from {start:,} to infinity")
-    print("number max_height steps cpu_time wall_time thread")
     sys.stdout.flush()
 
     # Start printer
