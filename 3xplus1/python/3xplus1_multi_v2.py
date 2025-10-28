@@ -89,7 +89,9 @@ wall_start = time.perf_counter()
 # ----------------------------------------------------------------------
 # Worker thread
 # ----------------------------------------------------------------------
-def worker(thread_id: int, start_num: int, stride: int, batch_size: int):
+def worker(
+    thread_id: int, start_num: int, stride: int, batch_size: int, progress: list
+):
     global global_max_height
 
     num = start_num + thread_id
@@ -122,6 +124,15 @@ def worker(thread_id: int, start_num: int, stride: int, batch_size: int):
         # Append atomically
         with max_lock:
             records.extend(local_records)
+            # Update progress with last processed number
+            if current >= batch_end:
+                progress[thread_id] = (
+                    batch_end - stride + (current - batch_end) % stride
+                )  # but since loop exits at >=, use current - stride
+            else:
+                progress[thread_id] = (
+                    current - stride if current > num else num - stride
+                )
 
         num = batch_end
         batch_end += batch_size
@@ -234,6 +245,9 @@ def main():
     print(f"Starting {args.threads} threads from {start:,} to infinity")
     sys.stdout.flush()
 
+    # Shared progress tracker (last processed num per thread)
+    progress = [start - 1] * args.threads
+
     # Start printer
     printer = threading.Thread(target=printer_thread, args=(args.csv,), daemon=True)
     printer.start()
@@ -242,7 +256,9 @@ def main():
     workers = []
     for tid in range(args.threads):
         t = threading.Thread(
-            target=worker, args=(tid, start, args.threads, args.batch), daemon=True
+            target=worker,
+            args=(tid, start, args.threads, args.batch, progress),
+            daemon=True,
         )
         t.start()
         workers.append(t)
@@ -250,10 +266,11 @@ def main():
     try:
         while not SHUTDOWN.is_set():
             time.sleep(1)
-            # Save checkpoint every 10 seconds
+            # Save checkpoint every 1 second based on min progress
             with max_lock:
-                if records:
-                    save_checkpoint(records[-1].num)
+                if progress and min(progress) > start - 1:
+                    save_checkpoint(min(progress))
+
     except KeyboardInterrupt:
         pass
     finally:
@@ -262,10 +279,9 @@ def main():
             t.join()
         printer.join()
 
-        final_num = start
         with max_lock:
-            if records:
-                final_num = max(r.num for r in records)
+            final_num = min(progress) if progress else start - 1
+
         save_checkpoint(final_num)
 
         print("\n\nStopped.")
