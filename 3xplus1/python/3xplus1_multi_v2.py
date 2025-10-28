@@ -61,14 +61,17 @@ def collatz_max_height_steps(n: int):
     steps = 0
     max_h = n
     while n > 1:
-        if n > max_h:
-            max_h = n
         if n & 1:  # odd
-            n = (n * 3 + 1) >> 1
+            temp = n * 3 + 1
+            if temp > max_h:
+                max_h = temp
+            n = temp >> 1
             steps += 2
         else:
             n >>= 1
             steps += 1
+        if n > max_h:
+            max_h = n
     return max_h, steps
 
 
