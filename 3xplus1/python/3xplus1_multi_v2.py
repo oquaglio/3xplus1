@@ -120,19 +120,11 @@ def worker(
                     )
 
             current += stride
+            progress[thread_id] = current - stride  # Update after each computation
 
         # Append atomically
         with max_lock:
             records.extend(local_records)
-            # Update progress with last processed number
-            if current >= batch_end:
-                progress[thread_id] = (
-                    batch_end - stride + (current - batch_end) % stride
-                )  # but since loop exits at >=, use current - stride
-            else:
-                progress[thread_id] = (
-                    current - stride if current > num else num - stride
-                )
 
         num = batch_end
         batch_end += batch_size
@@ -145,6 +137,7 @@ def printer_thread(csv_file: str = None):
     printed_height = 0
     last_printed_num = 0
     csv_writer = None
+    f = None
 
     if csv_file:
         f = open(csv_file, "a", newline="", buffering=1)
@@ -152,6 +145,7 @@ def printer_thread(csv_file: str = None):
         csv_writer.writerow(
             ["num", "height", "steps", "cpu_time", "wall_time", "thread"]
         )
+        f.flush()
 
     print("number max_height steps cpu_time wall_time thread", flush=True)
 
@@ -188,11 +182,15 @@ def printer_thread(csv_file: str = None):
                                 f"T{r.thread_id:02d}",
                             ]
                         )
+                        f.flush()  # Ensure immediate write to disk
 
                     # Remove all <= this num
                     while records and records[0].num <= r.num:
                         records.popleft()
                     break
+
+    if f:
+        f.close()
 
 
 # ----------------------------------------------------------------------
@@ -267,9 +265,9 @@ def main():
         while not SHUTDOWN.is_set():
             time.sleep(1)
             # Save checkpoint every 1 second based on min progress
-            with max_lock:
-                if progress and min(progress) > start - 1:
-                    save_checkpoint(min(progress))
+            min_progress = min(progress)
+            if min_progress > start - 1:
+                save_checkpoint(min_progress)
 
     except KeyboardInterrupt:
         pass
@@ -279,8 +277,8 @@ def main():
             t.join()
         printer.join()
 
-        with max_lock:
-            final_num = min(progress) if progress else start - 1
+        min_progress = min(progress)
+        final_num = min_progress if min_progress >= start else start
 
         save_checkpoint(final_num)
 
